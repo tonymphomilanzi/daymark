@@ -37,7 +37,7 @@ export function LogoMark({ collapsed }) {
   return (
     <div className="flex items-center gap-2.5 px-3 py-4">
       <div className="flex h-7 w-7 items-center justify-center rounded-md  text-accent-foreground">
-      <img  type="image/png" sizes="32x32" src="favicon/favicon-32x32.png" />
+      <img  type="image/png" height="32" width="32" src="favicon/favicon-32x32.png" />
       </div>
       {!collapsed ? (
         <div>
