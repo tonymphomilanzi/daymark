@@ -15,113 +15,130 @@ uniform float uMid;
 uniform float uHigh;
 uniform float uTalk;
 
-float hash(vec3 p) {
-  p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
-  p *= 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-float vnoise(vec3 p) {
-  vec3 i = floor(p);
-  vec3 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float n000 = hash(i);
-  float n100 = hash(i + vec3(1.0, 0.0, 0.0));
-  float n010 = hash(i + vec3(0.0, 1.0, 0.0));
-  float n110 = hash(i + vec3(1.0, 1.0, 0.0));
-  float n001 = hash(i + vec3(0.0, 0.0, 1.0));
-  float n101 = hash(i + vec3(1.0, 0.0, 1.0));
-  float n011 = hash(i + vec3(0.0, 1.0, 1.0));
-  float n111 = hash(i + vec3(1.0, 1.0, 1.0));
-  return mix(
-    mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-    mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
-    f.z
-  );
-}
-float fbm(vec3 p) {
-  float v = 0.0;
-  float a = 0.5;
-  for (int i = 0; i < 5; i++) {
-    v += a * vnoise(p);
-    p = p * 2.07 + vec3(0.17, 0.31, 0.11);
-    a *= 0.5;
-  }
-  return v;
-}
 mat2 rot(float a) {
   float c = cos(a), s = sin(a);
   return mat2(c, -s, s, c);
 }
 
-void main() {
-  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
-  float t = uTime;
-  float amp = uAmp;
-  float talk = uTalk;
-
-  vec3 ro = vec3(0.0, 0.0, 2.55);
-  vec3 rd = normalize(vec3(uv * 1.35, -1.35));
-  float yaw = t * 0.18;
-  float pit = 0.18 + 0.08 * sin(t * 0.23);
-  rd.xz *= rot(yaw); ro.xz *= rot(yaw);
-  rd.yz *= rot(pit); ro.yz *= rot(pit);
-
-  float rad = 0.72 + amp * 0.28 + uLow * 0.12;
+vec2 sphereHit(vec3 ro, vec3 rd, float rad) {
   float b = dot(ro, rd);
   float c = dot(ro, ro) - rad * rad;
   float h = b * b - c;
+  if (h < 0.0) return vec2(-1.0);
+  h = sqrt(h);
+  return vec2(-b - h, -b + h);
+}
 
-  vec3 idle = vec3(0.25, 0.72, 0.92);
-  vec3 hot  = vec3(1.0, 0.72, 0.28);
-  vec3 pal  = mix(idle, vec3(0.7, 0.96, 1.0), talk);
-  pal = mix(pal, hot, smoothstep(0.25, 1.0, amp));
+float field(vec3 p, float t) {
+  vec3 n = normalize(p);
+  float lon = atan(n.x, n.z);
+  float lat = n.y;
+  float w = 0.42 + uAmp * 0.7 + uTalk * 0.25;
+
+  vec3 q = n;
+  q += w * 0.22 * vec3(
+    sin(n.y * 2.4 + t),
+    sin(n.z * 2.1 - t * 0.85),
+    sin(n.x * 2.6 + t * 0.7)
+  );
+
+  float f = 0.0;
+  f += 0.90 * sin(q.x * 2.5 + q.z * 0.9 + t * 0.65);
+  f += 0.70 * sin(q.y * 3.2 - t * 0.55);
+  f += 0.55 * sin(dot(q, vec3(0.82, 0.28, 1.05)) * 3.3 + t * 0.42);
+  f += 0.40 * sin(dot(q, vec3(-0.72, 1.0, 0.18)) * 4.0 - t * 0.38);
+  f += 0.35 * sin(lon * 2.0 + lat * 2.6 + t * 0.5);
+  f += uAmp * 0.55 * sin(lat * 5.0 + lon * 3.0 + t * 2.4);
+  f += uMid * 0.35 * sin(lon * 4.0 - t * 1.8);
+  return f;
+}
+
+vec3 cyan() { return vec3(0.18, 0.95, 0.90); }
+vec3 ice()  { return vec3(0.62, 1.00, 0.97); }
+vec3 hot()  { return vec3(1.00, 0.72, 0.28); }
+
+vec4 shadeSurface(vec3 p, vec3 n, vec3 rd, float face, float t) {
+  float f = field(p, t);
+
+  float envelope = smoothstep(0.08, 1.25, abs(f));
+  envelope = pow(envelope, 0.82);
+
+  float ridges = sin(f * 16.5);
+  ridges = ridges * ridges;
+  float hatch  = 0.5 + 0.5 * sin(f * 42.0);
+  hatch = mix(1.0, 0.45 + 0.55 * hatch, 0.72);
+
+  float glow = envelope * (0.22 + 0.78 * ridges) * hatch;
+  glow *= 1.0 + uAmp * 1.35 + uTalk * 0.35;
+
+  vec3 l = normalize(vec3(0.45, 0.55, 0.7));
+  float ndl = 0.55 + 0.45 * max(dot(n, l), 0.0);
+  float ndv = max(dot(n, -rd), 0.0);
+  float fres = pow(1.0 - ndv, 2.65);
+  float spec = pow(max(dot(reflect(-l, n), -rd), 0.0), 48.0) * envelope;
+
+  vec3 pal = mix(cyan(), ice(), ridges * envelope * 0.55);
+  pal = mix(pal, hot(), uTalk * smoothstep(0.35, 1.0, uAmp) * envelope);
+
+  vec3 col = pal * glow * ndl * 1.55;
+  col += pal * fres * (0.40 + uAmp * 0.35) * face;
+  col += ice() * spec * 0.85 * face;
+
+  float alpha = (glow * 0.9 + fres * 0.45) * face;
+  return vec4(col, clamp(alpha, 0.0, 1.0));
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
+  float t = uTime * (0.32 + uAmp * 1.6 + uTalk * 0.5);
+
+  vec3 ro = vec3(0.0, 0.02, 2.72);
+  vec3 rd = normalize(vec3(uv * 1.12, -1.0));
+
+  float yaw = uTime * 0.12;
+  float pit = 0.16 + 0.06 * sin(uTime * 0.21);
+  rd.xz *= rot(yaw); ro.xz *= rot(yaw);
+  rd.yz *= rot(pit); ro.yz *= rot(pit);
+
+  float rad = 1.0 + uAmp * 0.025 + uLow * 0.02;
+  vec2 hit = sphereHit(ro, rd, rad);
 
   vec3 col = vec3(0.0);
   float alpha = 0.0;
-  float r2 = dot(uv, uv);
+  float r = length(uv);
 
-  float corona = exp(-r2 * 6.5) * (0.14 + amp * 0.9);
-  col += pal * corona;
-  alpha += corona * 0.55;
+  float halo = exp(-pow(max(r - 0.42, 0.0) * 18.0, 2.0)) * (0.08 + uAmp * 0.18);
+  col += cyan() * halo;
+  alpha += halo;
 
-  if (h > 0.0) {
-    float t0 = max(0.0, -b - sqrt(h));
-    float t1 = -b + sqrt(h);
-    float dt = (t1 - t0) / 22.0;
-    float dens = 0.0;
-    vec3 acc = vec3(0.0);
+  if (hit.y > 0.0) {
+    vec3 pFar  = ro + rd * hit.y;
+    vec3 pNear = ro + rd * max(hit.x, 0.0);
+    vec3 nFar  = normalize(pFar);
+    vec3 nNear = normalize(pNear);
 
-    for (int i = 0; i < 22; i++) {
-      vec3 p = ro + rd * (t0 + (float(i) + 0.5) * dt);
-      float n = fbm(p * (1.5 + amp * 1.2) + vec3(t * 0.35, t * 0.22, t * 0.18));
-      n = fbm(p * 2.2 + vec3(n * 1.6, t * 0.3, -t * 0.2));
-      float d = length(p);
-      float shell = smoothstep(rad, rad - 0.48, d) * smoothstep(0.08, 0.32, d);
-      float field = smoothstep(0.22, 0.8, n + amp * 0.65 + uMid * 0.4);
-      float fil = smoothstep(0.55, 0.95, fbm(p * (4.0 + amp * 5.0) + t * 0.8));
-      float sample = shell * (0.2 + field + fil * (0.3 + amp)) * (1.0 + amp * 2.2) * dt * 3.1;
-      vec3 tone = mix(pal, vec3(1.0), field * 0.45);
-      tone = mix(tone, hot, fil * amp);
-      acc += tone * sample * (1.0 - dens);
-      dens += sample * (1.0 - dens);
-    }
+    vec3 body = vec3(0.010, 0.045, 0.052);
+    float bodyA = 0.88;
 
-    vec3 nrm = normalize(ro + rd * t0);
-    float fres = pow(1.0 - max(dot(-rd, nrm), 0.0), 2.2);
-    col += acc * 1.25 + mix(pal, vec3(1.0), 0.5) * fres * (0.5 + amp * 1.4);
-    alpha += clamp(dens + fres * 0.6, 0.0, 1.0);
+    vec4 back  = shadeSurface(pFar,  nFar,  rd, 0.28, t);
+    vec4 front = shadeSurface(pNear, nNear, rd, 1.00, t);
+
+    vec3 rgb = body;
+    rgb = rgb * (1.0 - back.a) + back.rgb;
+    rgb = rgb + front.rgb;
+
+    float a = max(bodyA, max(back.a, front.a));
+
+    float ndv = max(dot(nNear, -rd), 0.0);
+    float rim = pow(1.0 - ndv, 3.2);
+    rgb += cyan() * rim * 0.55;
+    a = max(a, rim * 0.5);
+
+    col += rgb;
+    alpha = max(alpha, a);
   }
 
-  float ring = abs(length(uv) - (0.40 + amp * 0.06));
-  float ringA = 0.002 / (ring + 0.0008);
-  col += pal * ringA * (0.25 + amp);
-  alpha += ringA * 0.3;
-
-  float core = exp(-r2 * 70.0) * (0.3 + amp * 2.2);
-  col += mix(pal, vec3(1.0), 0.7) * core;
-  alpha += core * 0.55;
-
-  gl_FragColor = vec4(pow(max(col, 0.0), vec3(0.9)), clamp(alpha, 0.0, 1.0));
+  gl_FragColor = vec4(pow(max(col, 0.0), vec3(0.92)), clamp(alpha, 0.0, 1.0));
 }
 `;
 
@@ -156,11 +173,11 @@ function teardown(audio) {
   } catch {}
 }
 
-export function VoiceReactor({ size = 132, label = "J.A.R.V.I.S." }) {
+export function VoiceReactor({ size = 168, label = "" }) {
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
   const levelRef = useRef({ amp: 0, low: 0, mid: 0, high: 0, talk: 0, meter: 0 });
-  const [status, setStatus] = useState("TAP TO LISTEN");
+  const [status, setStatus] = useState("");
   const [meter, setMeter] = useState(0);
 
   const arm = async () => {
@@ -337,7 +354,7 @@ export function VoiceReactor({ size = 132, label = "J.A.R.V.I.S." }) {
   }, []);
 
   return (
-    <div className="flex shrink-0 items-center gap-2">
+    <div className="flex shrink-0 items-center gap-3">
       <button
         type="button"
         onClick={arm}
@@ -353,10 +370,7 @@ export function VoiceReactor({ size = 132, label = "J.A.R.V.I.S." }) {
           {status}
         </p>
         <div className="mt-2 h-[3px] w-16 overflow-hidden rounded-full bg-white/10">
-          <div
-            className="h-full bg-cyan-300"
-            style={{ width: `${Math.round(meter * 100)}%` }}
-          />
+          <div className="h-full bg-cyan-300" style={{ width: `${Math.round(meter * 100)}%` }} />
         </div>
       </div>
     </div>
