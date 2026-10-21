@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { reactorTheme } from "./reactorTheme";
 
 const VERT = `
 attribute vec2 aPos;
@@ -14,6 +15,10 @@ uniform float uLow;
 uniform float uMid;
 uniform float uHigh;
 uniform float uTalk;
+uniform vec3  uCyan;
+uniform vec3  uIce;
+uniform vec3  uHot;
+uniform vec3  uCore;
 
 mat2 rot(float a) {
   float c = cos(a), s = sin(a);
@@ -53,20 +58,13 @@ float field(vec3 p, float t) {
   return f;
 }
 
-vec3 cyan() { return vec3(0.18, 0.95, 0.90); }
-vec3 ice()  { return vec3(0.62, 1.00, 0.97); }
-vec3 hot()  { return vec3(1.00, 0.72, 0.28); }
-
 vec4 shadeSurface(vec3 p, vec3 n, vec3 rd, float face, float t) {
   float f = field(p, t);
 
-  float envelope = smoothstep(0.08, 1.25, abs(f));
-  envelope = pow(envelope, 0.82);
-
+  float envelope = pow(smoothstep(0.08, 1.25, abs(f)), 0.82);
   float ridges = sin(f * 16.5);
-  ridges = ridges * ridges;
-  float hatch  = 0.5 + 0.5 * sin(f * 42.0);
-  hatch = mix(1.0, 0.45 + 0.55 * hatch, 0.72);
+  ridges *= ridges;
+  float hatch = mix(1.0, 0.45 + 0.55 * (0.5 + 0.5 * sin(f * 42.0)), 0.72);
 
   float glow = envelope * (0.22 + 0.78 * ridges) * hatch;
   glow *= 1.0 + uAmp * 1.35 + uTalk * 0.35;
@@ -77,12 +75,12 @@ vec4 shadeSurface(vec3 p, vec3 n, vec3 rd, float face, float t) {
   float fres = pow(1.0 - ndv, 2.65);
   float spec = pow(max(dot(reflect(-l, n), -rd), 0.0), 48.0) * envelope;
 
-  vec3 pal = mix(cyan(), ice(), ridges * envelope * 0.55);
-  pal = mix(pal, hot(), uTalk * smoothstep(0.35, 1.0, uAmp) * envelope);
+  vec3 pal = mix(uCyan, uIce, ridges * envelope * 0.55);
+  pal = mix(pal, uHot, uTalk * smoothstep(0.35, 1.0, uAmp) * envelope);
 
   vec3 col = pal * glow * ndl * 1.55;
   col += pal * fres * (0.40 + uAmp * 0.35) * face;
-  col += ice() * spec * 0.85 * face;
+  col += uIce * spec * 0.85 * face;
 
   float alpha = (glow * 0.9 + fres * 0.45) * face;
   return vec4(col, clamp(alpha, 0.0, 1.0));
@@ -108,7 +106,7 @@ void main() {
   float r = length(uv);
 
   float halo = exp(-pow(max(r - 0.42, 0.0) * 18.0, 2.0)) * (0.08 + uAmp * 0.18);
-  col += cyan() * halo;
+  col += uCyan * halo;
   alpha += halo;
 
   if (hit.y > 0.0) {
@@ -117,21 +115,18 @@ void main() {
     vec3 nFar  = normalize(pFar);
     vec3 nNear = normalize(pNear);
 
-    vec3 body = vec3(0.010, 0.045, 0.052);
-    float bodyA = 0.88;
-
     vec4 back  = shadeSurface(pFar,  nFar,  rd, 0.28, t);
     vec4 front = shadeSurface(pNear, nNear, rd, 1.00, t);
 
-    vec3 rgb = body;
+    vec3 rgb = uCore;
     rgb = rgb * (1.0 - back.a) + back.rgb;
     rgb = rgb + front.rgb;
 
-    float a = max(bodyA, max(back.a, front.a));
+    float a = max(0.88, max(back.a, front.a));
 
     float ndv = max(dot(nNear, -rd), 0.0);
     float rim = pow(1.0 - ndv, 3.2);
-    rgb += cyan() * rim * 0.55;
+    rgb += uCyan * rim * 0.55;
     a = max(a, rim * 0.5);
 
     col += rgb;
@@ -148,6 +143,14 @@ function compile(gl, type, src) {
   gl.compileShader(s);
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
   return s;
+}
+
+function hexToRgb(hex) {
+  const n = String(hex || "").replace("#", "").trim();
+  const full = n.length === 3 ? n.split("").map((c) => c + c).join("") : n;
+  const v = parseInt(full, 16);
+  if (!Number.isFinite(v) || full.length !== 6) return [0, 0, 0];
+  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
 }
 
 function hzEnergy(freq, sampleRate, fftSize, hz0, hz1) {
@@ -173,11 +176,17 @@ function teardown(audio) {
   } catch {}
 }
 
-export function VoiceReactor({ size = 168, label = "" }) {
+export function VoiceReactor({
+  size = 168,
+  label = "J.A.R.V.I.S.",
+  colors = reactorTheme,
+}) {
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
+  const colorsRef = useRef(colors);
+  colorsRef.current = colors;
   const levelRef = useRef({ amp: 0, low: 0, mid: 0, high: 0, talk: 0, meter: 0 });
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("OFF");
   const [meter, setMeter] = useState(0);
 
   const arm = async () => {
@@ -264,6 +273,10 @@ export function VoiceReactor({ size = 168, label = "" }) {
     const uMid = gl.getUniformLocation(prog, "uMid");
     const uHigh = gl.getUniformLocation(prog, "uHigh");
     const uTalk = gl.getUniformLocation(prog, "uTalk");
+    const uCyan = gl.getUniformLocation(prog, "uCyan");
+    const uIce = gl.getUniformLocation(prog, "uIce");
+    const uHot = gl.getUniformLocation(prog, "uHot");
+    const uCore = gl.getUniformLocation(prog, "uCore");
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -276,6 +289,11 @@ export function VoiceReactor({ size = 168, label = "" }) {
     const draw = (now) => {
       const t = (now - t0) / 1000;
       const a = audioRef.current;
+      const theme = colorsRef.current || reactorTheme;
+      const [cr, cg, cb] = hexToRgb(theme.cyan);
+      const [ir, ig, ib] = hexToRgb(theme.ice);
+      const [hr, hg, hb] = hexToRgb(theme.hot);
+      const [or_, og, ob] = hexToRgb(theme.core);
 
       if (a?.ctx?.state === "suspended") a.ctx.resume().catch(() => {});
 
@@ -342,6 +360,10 @@ export function VoiceReactor({ size = 168, label = "" }) {
       gl.uniform1f(uMid, lvl.mid);
       gl.uniform1f(uHigh, lvl.high);
       gl.uniform1f(uTalk, lvl.talk);
+      gl.uniform3f(uCyan, cr, cg, cb);
+      gl.uniform3f(uIce, ir, ig, ib);
+      gl.uniform3f(uHot, hr, hg, hb);
+      gl.uniform3f(uCore, or_, og, ob);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       raf = requestAnimationFrame(draw);
     };
